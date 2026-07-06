@@ -5,10 +5,10 @@ what data the extension touches, where it goes, and where it does **not** go.
 
 ## The short version
 
-GeoMirror makes **no requests to any server it does not need**, sends **no
-telemetry**, collects **no analytics**, and shares data with **no third party
-other than the four geolocation services listed below** — which it contacts only
-to do its job, and only with the minimum information required.
+GeoMirror has no project backend, sends no telemetry, collects no analytics,
+and makes only the public-provider requests listed below. Those requests are
+necessary to discover the current exit IP profile and select/display a matching
+location.
 
 ## What the extension does
 
@@ -21,8 +21,9 @@ to do its job, and only with the minimum information required.
    that location and picks a point on one of them as the override coordinate.
 3. It optionally asks BigDataCloud for a human-readable address of that point,
    purely so the popup can display it.
-4. A content script injects the chosen coordinate into `navigator.geolocation`
-   on the pages you visit, so pages receive a location consistent with your IP.
+4. Content scripts apply the chosen coordinate, timezone, locale/language, and
+   regional-font policy to page-visible browser APIs. They do not read page
+   text, cookies, forms, credentials, or browsing history.
 
 ## Network requests (the complete list)
 
@@ -39,9 +40,13 @@ These are the **only** outbound connections the extension ever makes. They are
 declared in `manifest.json` under `host_permissions`, so you can verify them
 yourself and Chrome will warn you before granting them.
 
+GeoMirror is therefore **not a zero-network extension**. Automatic public-exit
+matching requires querying an IP information source. The privacy guarantee is
+that the network boundary is explicit and auditable—not that no request exists.
+
 ## What is stored, and where
 
-- The detected IP, the chosen override coordinate, and your settings are stored
+- The detected IP profile, the chosen override coordinate, and your settings are stored
   **locally** in Chrome's extension storage (`chrome.storage.local`). They never
   leave your machine.
 - Nothing is written to disk outside Chrome's own storage.
@@ -49,9 +54,9 @@ yourself and Chrome will warn you before granting them.
 ## What the extension does NOT do
 
 - No analytics, no telemetry, no crash reporting, no tracking pixels.
-- No reading of page content, cookies, credentials, or form data. The content
-  script only overrides `navigator.geolocation` and the geolocation permission
-  query — nothing else.
+- No reading of page content, cookies, credentials, form data, or browsing
+  history. Content scripts only override the documented geolocation, timezone,
+  locale/language, and font-observation surfaces.
 - No background data resale or "SDK" of any kind.
 - No account, no sign-up, no login.
 
@@ -62,8 +67,8 @@ websites". That permission is **required** because it must run a content script
 on every site to override the geolocation API — there is no narrower way to do
 this in Chrome. It is also the kind of permission a malicious extension could
 abuse, so you are right to scrutinize it. The source code is short and fully
-auditable; in particular, `content-inject.js` only touches `navigator.geolocation`
-and `navigator.permissions`, and the content scripts never read page content.
+auditable; `content-inject.js` only patches the browser APIs documented in the
+repository, and the content scripts never read page content.
 
 If you are privacy-conscious, you can run it unpacked from source so you can
 read and rebuild it yourself at any time.

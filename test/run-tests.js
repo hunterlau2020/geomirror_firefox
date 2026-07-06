@@ -6,6 +6,7 @@ const path = require('path');
 
 const TZ = require(path.join(__dirname, '..', 'lib', 'timezone.js'));
 const Locale = require(path.join(__dirname, '..', 'lib', 'locale.js'));
+const Fonts = require(path.join(__dirname, '..', 'lib', 'font-mask.js'));
 const IPLoc = require(path.join(__dirname, '..', 'lib', 'providers.js'));
 
 let passed = 0;
@@ -37,6 +38,10 @@ test('timezone offsets are DST-aware and use the supplied Date instance', () => 
 
 test('timezone helper returns null for invalid IANA timezone', () => {
   eq(TZ.tzOffsetMinutes('Not/A_Zone', new Date('2026-06-15T12:00:00Z')), null);
+});
+
+test('timezone helper preserves Invalid Date semantics', () => {
+  assert(Number.isNaN(TZ.tzOffsetMinutes('America/Los_Angeles', new Date('invalid'))));
 });
 
 test('locale inference handles country defaults', () => {
@@ -111,11 +116,49 @@ test('IP providers parse timezone fields without discarding location fields', ()
   }).timezone, 'Europe/London');
 });
 
-test('manifest includes timezone helper before MAIN-world injector', () => {
+test('the first provider is location-only and later providers can supply timezone', () => {
+  eq(IPLoc.IP_PROVIDERS[0].name, 'reallyfreegeoip');
+  eq(IPLoc.IP_PROVIDERS[0].parse({
+    ip: '203.0.113.4',
+    latitude: 34.05,
+    longitude: -118.24,
+  }).timezone, null);
+  assert(
+    IPLoc.IP_PROVIDERS.slice(1).some((provider) =>
+      provider.parse(provider.name === 'ipwho.is'
+        ? { timezone: { id: 'America/Los_Angeles' } }
+        : { timezone: 'America/Los_Angeles' }
+      ).timezone === 'America/Los_Angeles'
+    )
+  );
+});
+
+test('font mask recognizes system and Chinese vendor fonts', () => {
+  assert(Fonts.containsBlockedFont("72px 'PingFang SC', sans-serif"));
+  assert(Fonts.containsBlockedFont('16px MiSans'));
+  assert(Fonts.containsBlockedFont('12px FZCustomFont'));
+  assert(!Fonts.containsBlockedFont('16px Arial, sans-serif'));
+});
+
+test('font mask rewrites only regional font families', () => {
+  eq(
+    Fonts.rewriteFontSpec("72px 'PingFang SC', monospace"),
+    `72px '${Fonts.MASKED_FAMILY}', monospace`
+  );
+  eq(Fonts.rewriteFontSpec('16px Arial, sans-serif'), '16px Arial, sans-serif');
+});
+
+test('font mask stays off for Chinese exit profiles', () => {
+  assert(Fonts.isChineseProfile('zh-CN', 'Asia/Shanghai'));
+  assert(Fonts.isChineseProfile('en-US', 'Asia/Hong_Kong'));
+  assert(!Fonts.isChineseProfile('en-US', 'America/Los_Angeles'));
+});
+
+test('manifest includes helpers before MAIN-world injector', () => {
   const manifest = require(path.join(__dirname, '..', 'manifest.json'));
   const mainScript = manifest.content_scripts.find((script) => script.world === 'MAIN');
   assert(mainScript, 'MAIN world content script is missing');
-  eq(mainScript.js, ['lib/timezone.js', 'content-inject.js']);
+  eq(mainScript.js, ['lib/timezone.js', 'lib/font-mask.js', 'content-inject.js']);
   assert(manifest.permissions.includes('declarativeNetRequest'), 'DNR permission is required for Accept-Language');
 });
 

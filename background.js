@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   ipToken: '',            // optional ipinfo.io token for better fallback
   tzEnabled: true,        // spoof Date/Intl timezone to match exit IP
   langEnabled: true,      // spoof navigator.language / Intl locale + Accept-Language header
+  fontEnabled: true,      // mask Chinese regional fonts for non-Chinese exit profiles
 };
 
 const ALARM = 'refresh';
@@ -82,9 +83,10 @@ async function refresh() {
     const addr = await IPLoc.getDisplayAddress(pick.lat, pick.lon);
     const now = Date.now();
 
-    // Timezone: prefer the provider's IANA name; fall back to looking it up is
-    // not needed — IP providers already return city-level tz. If a provider
-    // omitted it, downstream just keeps the real tz.
+    // getIPLocation prefers a provider result with an IANA timezone and only
+    // returns a location-only fallback when all timezone-capable providers fail.
+    // The MAIN-world injector keeps its neutral bootstrap in that rare case
+    // instead of leaking the host timezone.
     const timezone = ip.timezone || null;
     const loc = Locale.localeFor(ip.countryCode, timezone);
 
@@ -95,6 +97,7 @@ async function refresh() {
       timezone,
       tzEnabled: s.tzEnabled,
       langEnabled: s.langEnabled,
+      fontEnabled: s.fontEnabled,
       locale: loc ? loc.language : null,
       languages: loc ? loc.languages : null,
       acceptLanguage: loc ? loc.acceptLanguage : null,
@@ -162,6 +165,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         override.acc = next.accuracyM;
         override.tzEnabled = next.tzEnabled;
         override.langEnabled = next.langEnabled;
+        override.fontEnabled = next.fontEnabled;
         await chrome.storage.local.set({ override });
       }
       // Toggling language spoofing changes whether the header rule is active.

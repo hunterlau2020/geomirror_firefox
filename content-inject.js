@@ -1,7 +1,7 @@
 /* GeoMirror — MAIN-world injector.
  *
  * Runs in the page's main world at document_start, before page scripts, so every
- * override is visible to them. It spoofs three surfaces so the page sees a single
+ * override is visible to them. It spoofs four surfaces so the page sees a single
  * consistent "user" matching the exit IP:
  *
  *   1. navigator.geolocation            — residential coordinate near exit IP
@@ -9,6 +9,8 @@
  *                                         resolvedOptions().timeZone, default tz)
  *   3. navigator.language / Intl locale — ja-JP etc. (navigator.language(s) +
  *                                         Intl default locale)
+ *   4. regional font probes            — hides Chinese system/vendor fonts when
+ *                                         the exit profile is not Chinese
  *
  * Data arrives asynchronously via <html data-geomirror> (written by the isolated
  * bridge). Geolocation callbacks and tz/lang reads are simply held until ready —
@@ -24,13 +26,40 @@
   // Capture real APIs before shadowing (used when an override is off / to defer).
   let realGeo = null;
   try { realGeo = navigator.geolocation; } catch (_) {}
+  const realTZO = Date.prototype.getTimezoneOffset;
   const realDTF = Intl.DateTimeFormat;
   const realNumFmt = Intl.NumberFormat;
   const realCol = Intl.Collator;
+  const realLanguage = navigator.language;
+  const realLanguages = Array.from(navigator.languages || [realLanguage]);
 
-  let cache = null;
+  // chrome.storage is not synchronously available in MAIN world. Install the
+  // wrappers against a neutral profile immediately so an inline page script
+  // cannot win the bridge race and read the host's Asia/Shanghai timezone.
+  // The real exit-IP profile replaces this as soon as the bridge publishes it.
+  const BOOTSTRAP_PROFILE = {
+    enabled: true,
+    timezone: 'Etc/UTC',
+    tzEnabled: true,
+    locale: 'en-US',
+    languages: ['en-US', 'en'],
+    langEnabled: true,
+    fontEnabled: true,
+  };
+  let cache = { ...BOOTSTRAP_PROFILE };
   let readyResolve;
   const ready = new Promise((r) => { readyResolve = r; });
+
+  function mergeProfile(base, next) {
+    const merged = { ...base, ...next };
+    // A location-only provider must never disable the timezone wrapper and
+    // expose the host timezone. Keep the neutral bootstrap until refresh can
+    // obtain a real IANA timezone from a later provider.
+    if (merged.tzEnabled && !merged.timezone) {
+      merged.timezone = (base && base.timezone) || BOOTSTRAP_PROFILE.timezone;
+    }
+    return merged;
+  }
 
   function loadFromDOM() {
     const attr = HTML.getAttribute('data-geomirror');
@@ -38,11 +67,11 @@
     let next = null;
     try { next = JSON.parse(attr); } catch (_) { return; }
     if (next && next.lat != null && next.lon != null) {
-      cache = next;
+      cache = mergeProfile(BOOTSTRAP_PROFILE, next);
       if (readyResolve) { readyResolve(); readyResolve = null; }
     } else if (next) {
       // tz/lang may be valid even if coords aren't ready yet; keep what we can.
-      cache = { ...cache, ...next };
+      cache = mergeProfile(cache, next);
       if (cache && (cache.tzEnabled || cache.langEnabled) && readyResolve) {
         readyResolve(); readyResolve = null;
       }
@@ -172,7 +201,13 @@
   }
 
   function applyTimezone() {
-    if (!tzActive()) return;
+    if (!tzActive()) {
+      try { Date.prototype.getTimezoneOffset = realTZO; } catch (_) {}
+      if (!langActive()) {
+        try { Intl.DateTimeFormat = realDTF; } catch (_) {}
+      }
+      return;
+    }
     const tz = cache.timezone;
 
     const fakeTZO = function getTimezoneOffset() {
@@ -195,7 +230,7 @@
       const opts = (options && typeof options === 'object') ? Object.assign({}, options) : {};
       if (opts.timeZone === undefined) opts.timeZone = tz;
       if (locale === undefined && langActive()) locale = cache.locale;
-      if (locale === undefined) return new realDTF(opts);
+      if (locale === undefined) return new realDTF(undefined, opts);
       return new realDTF(locale, opts);
     };
     wrappedDTF.prototype = realDTF.prototype;
@@ -212,7 +247,13 @@
   }
 
   function applyLanguage() {
-    if (!langActive()) return;
+    if (!langActive()) {
+      defineGetter(navigator, 'language', () => realLanguage);
+      defineGetter(navigator, 'languages', () => realLanguages.slice());
+      try { Intl.NumberFormat = realNumFmt; } catch (_) {}
+      try { Intl.Collator = realCol; } catch (_) {}
+      return;
+    }
     const locale = cache.locale;
     const languages = (cache.languages && cache.languages.length) ? cache.languages : [locale];
 
@@ -254,11 +295,86 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Regional font masking
+  // ---------------------------------------------------------------------------
+  const Fonts = window.GeoMirrorFonts;
+
+  function fontMaskActive() {
+    return !!(
+      Fonts &&
+      cache &&
+      cache.fontEnabled !== false &&
+      !Fonts.isChineseProfile(cache.locale, cache.timezone)
+    );
+  }
+
+  function maskedFont(value) {
+    return fontMaskActive() ? Fonts.rewriteFontSpec(value) : value;
+  }
+
+  function patchFontDescriptor(proto, prop) {
+    if (!proto) return;
+    let desc;
+    try { desc = Object.getOwnPropertyDescriptor(proto, prop); } catch (_) { return; }
+    if (!desc || typeof desc.set !== 'function') return;
+    const realSet = desc.set;
+    const wrappedSet = function (value) {
+      return Reflect.apply(realSet, this, [maskedFont(value)]);
+    };
+    nativize(wrappedSet, `set ${prop}`);
+    try {
+      Object.defineProperty(proto, prop, { ...desc, set: wrappedSet });
+    } catch (_) {}
+  }
+
+  function installFontMask() {
+    if (!Fonts) return;
+
+    // Canvas-width probes set context.font, then compare measureText() against
+    // generic fallbacks. Replacing only the probed family makes both widths
+    // equal without modifying measureText() itself.
+    patchFontDescriptor(window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype, 'font');
+    patchFontDescriptor(window.OffscreenCanvasRenderingContext2D && OffscreenCanvasRenderingContext2D.prototype, 'font');
+
+    // Cover the common DOM-width variant where the probe assigns an inline
+    // font/font-family before reading offsetWidth or getBoundingClientRect().
+    const styleProto = window.CSSStyleDeclaration && CSSStyleDeclaration.prototype;
+    patchFontDescriptor(styleProto, 'font');
+    patchFontDescriptor(styleProto, 'fontFamily');
+    patchFontDescriptor(styleProto, 'cssText');
+    if (styleProto && typeof styleProto.setProperty === 'function') {
+      const realSetProperty = styleProto.setProperty;
+      const wrappedSetProperty = function (name, value, priority) {
+        const next = /^(?:font|font-family)$/i.test(String(name)) ? maskedFont(value) : value;
+        return Reflect.apply(realSetProperty, this, [name, next, priority]);
+      };
+      nativize(wrappedSetProperty, 'setProperty');
+      try { styleProto.setProperty = wrappedSetProperty; } catch (_) {}
+    }
+
+    // FontFaceSet#check is another direct local-font availability signal.
+    const fontSetProto = window.FontFaceSet && FontFaceSet.prototype;
+    if (fontSetProto && typeof fontSetProto.check === 'function') {
+      const realCheck = fontSetProto.check;
+      const wrappedCheck = function (font, text) {
+        if (fontMaskActive() && Fonts.containsBlockedFont(font)) return false;
+        return Reflect.apply(realCheck, this, arguments);
+      };
+      nativize(wrappedCheck, 'check');
+      try { fontSetProto.check = wrappedCheck; } catch (_) {}
+    }
+  }
+
   function applyAll() {
     applyTimezone();
     applyLanguage();
   }
 
+  // Apply the neutral bootstrap synchronously, before any page script can read
+  // the host timezone or probe locally installed regional fonts.
+  installFontMask();
+  applyAll();
   ready.then(applyAll);
 
   // ---------------------------------------------------------------------------
