@@ -1,10 +1,13 @@
 # GeoMirror
 
-> Make your browser profile match your visible IP: geolocation, timezone, language, and `Accept-Language` — automatically, on every page.
+> Make Chrome's regional profile match your visible IP: geolocation, timezone, language, `Accept-Language`, and regional font signals.
 
 GeoMirror is a Chrome Manifest V3 extension for people who use proxies, VPNs, remote desktops, or regional network exits and want the browser-visible environment to be internally consistent.
 
 [中文说明](./README.zh-CN.md) · [Privacy policy](./PRIVACY.md) · [Technical notes](./docs/TECHNICAL.md)
+
+> [!IMPORTANT]
+> GeoMirror currently changes **browser-side signals exposed to ordinary pages in Chrome**. It does not change macOS / Windows settings, the Claude Code process, terminal traffic, `ANTHROPIC_BASE_URL`, DNS, TLS, or your proxy route. Claude Code / CLI network-environment support is still on the roadmap.
 
 ---
 
@@ -24,6 +27,22 @@ Most people only change their **IP address**. Their browser still exposes signal
 
 That mismatch is exactly the kind of thing automated risk systems can use as a proxy/VPN/fraud signal. GeoMirror exists to close that gap.
 
+## Measured browser-side result: 72 → 1
+
+Test project:
+
+- Live check: [fuck-claude.vercel.app](https://fuck-claude.vercel.app/)
+- Source: [LinXiaoTao/FuckClaude](https://github.com/LinXiaoTao/FuckClaude)
+
+| Without GeoMirror | With GeoMirror |
+| --- | --- |
+| ![Browser-region fingerprint risk score of 72 without GeoMirror](./docs/images/fuck-claude-before-summary.png) | ![Browser-region fingerprint risk score of 1 with GeoMirror](./docs/images/fuck-claude-after-summary.png) |
+| ![Timezone, language, font and Intl signals detected without GeoMirror](./docs/images/fuck-claude-before-signals.png) | ![Timezone, language, font and Intl signals cleared with GeoMirror](./docs/images/fuck-claude-after-signals.png) |
+
+In this test environment, the estimate fell from **72/100** to **1/100**. The system-timezone, browser-language, Chinese-font, Intl-locale, and UTC+8-offset signals stopped matching; only the weak Apple Emoji signal inferred from the user agent remained.
+
+This is one result for a specific machine, Chrome version, exit IP, and detector version—not a guarantee about Claude or any platform's risk controls. The test project also states that only the OS-timezone signal directly corresponds to the public Claude Code reverse-engineering report; the other signals are correlation-based estimates.
+
 ## What GeoMirror does
 
 GeoMirror detects your visible **exit IP**, derives a plausible browser profile from that IP, and applies it locally inside Chrome:
@@ -37,6 +56,7 @@ GeoMirror detects your visible **exit IP**, derives a plausible browser profile 
 | Browser language | Spoofs `navigator.language` and `navigator.languages`. |
 | Intl locale | Spoofs default locale for `Intl.DateTimeFormat`, `Intl.NumberFormat`, and `Intl.Collator`. |
 | Request language | Sets outgoing `Accept-Language` via Chrome `declarativeNetRequest`. |
+| Regional fonts | Masks common Chinese system/vendor font probes when the exit profile is non-Chinese. |
 
 The goal is simple: if your IP looks like Tokyo, the browser should not still look like Shanghai, Los Angeles, or Berlin.
 
@@ -51,13 +71,30 @@ GeoMirror is local-first and auditable:
 - No remote configuration.
 - Computed overrides and settings are stored in `chrome.storage.local`.
 
-Important accuracy note: GeoMirror is not a zero-network extension. To match your current exit IP automatically, it must call explicitly listed public IP/geolocation/map APIs through Chrome’s network stack. These requests are limited to:
+### Network boundary: no project backend, but not zero-network
+
+To match your current exit IP automatically, GeoMirror must call explicitly listed public IP/geolocation/map APIs through Chrome’s network stack. These requests are limited to:
 
 - detecting the exit IP location,
 - finding nearby residential roads,
 - reverse-geocoding a display address for the popup.
 
-It does not upload page content or browsing history. See [PRIVACY.md](./PRIVACY.md) and [docs/TECHNICAL.md](./docs/TECHNICAL.md) for the exact data flow.
+It does not send page text, browsing history, cookies, credentials, form data, or scan results to the GeoMirror author. The project has no backend, account system, telemetry, or remote configuration. See [PRIVACY.md](./PRIVACY.md) and [docs/TECHNICAL.md](./docs/TECHNICAL.md) for the complete outbound-domain and field list.
+
+“Zero network access” and “automatically follow the current public exit IP” cannot both be true: without consulting an IP information source, the extension cannot know which public exit websites see. GeoMirror keeps automatic matching and limits network access to auditable public providers.
+
+## Comparison with adjacent tools
+
+| Approach | Strengths | Costs / risks | Best fit |
+| --- | --- | --- | --- |
+| GeoMirror | Uses your existing Chrome; automatically updates location, timezone, language, and font policy from the current exit IP; open-source and lightweight | Covers a focused set of Chrome page-level regional signals, not the complete fingerprint surface | One everyday browser, VPN/proxy switching, reducing obvious regional contradictions |
+| Anti-detect browsers (Multilogin, GoLogin, AdsPower, etc.) | Isolated profiles/cookies, proxy binding, broader control over Canvas, WebGL, WebRTC, hardware parameters, and automation | Separate browser/core and profile management, often paid; unusual cores, extensions, automation behavior, or internally inconsistent settings also become part of the observable surface | Multi-account isolation, teams, automation, and full profile management |
+| Single-purpose timezone/language extensions | Small and simple | Usually manual; easy to forget after changing exits, and does not coordinate geolocation, fonts, locale, and request headers | Fixed regions and one-signal changes |
+| OS settings / launch flags | Can affect Chrome and some local programs | Global side effects and higher switching cost; language, fonts, location, and the network exit still need separate handling | Fixed work environments or local CLI coverage |
+
+Mature anti-detect browsers also match timezone/geolocation to a proxy IP and cover many more surfaces; see the official [Multilogin fingerprint settings](https://multilogin.com/help/en_US/profile-settings-fingerprint-section) and [GoLogin profile parameters](https://gologin.com/docs/profile-parameters). GeoMirror's distinction is not broader coverage. It avoids creating a separate browser identity and instead repairs the most obvious regional contradictions inside your existing Chrome.
+
+“An anti-detect browser is itself a fingerprint” needs nuance: using one does not make detection inevitable, but any rare browser core, unusual API behavior, unstable parameters, or internal mismatch can increase distinguishability. A stable, coherent profile matters more than changing the maximum number of values.
 
 ## How it works
 
@@ -125,6 +162,7 @@ Also check DevTools → Network → request headers and confirm `Accept-Language
 
 Useful public checks:
 
+- [Fuck Claude live check](https://fuck-claude.vercel.app/) ([source](https://github.com/LinXiaoTao/FuckClaude))
 - https://browserleaks.com/geo
 - https://browserleaks.com/javascript
 - https://browserleaks.com/headers
@@ -134,6 +172,7 @@ Useful public checks:
 - **Location spoof** — enable/disable geolocation override.
 - **Timezone spoof** — enable/disable `Date` and `Intl.DateTimeFormat` timezone override.
 - **Language spoof** — enable/disable `navigator.language(s)`, Intl locale, and `Accept-Language` header override.
+- **Regional font mask** — mask common Chinese system/vendor font probes for non-Chinese exit profiles.
 - **Reported accuracy (m)** — reported GPS accuracy, default 30 m.
 - **Auto-refresh interval (minutes)** — how often GeoMirror re-detects the exit IP.
 - **ipinfo.io token (optional)** — improves fallback reliability if you have a token.
@@ -150,20 +189,20 @@ Useful public checks:
 
 ## If you do not want to install this extension
 
-You can ask your own coding agent to build a local version. Copy this prompt:
+You can give the following prompt to your coding agent to audit or build a local version. It includes the provider-timezone, first-read race, and font-probe details that are easy to miss:
 
 ```text
-Build a Chrome Manifest V3 extension that aligns browser-visible location signals with the current visible exit IP.
+Build an auditable Chrome Manifest V3 extension that aligns region signals visible to ordinary web pages with the current public exit IP.
 
 Requirements:
-1. Detect the browser's visible exit IP location through Chrome's network stack using multiple fallback IP geolocation providers.
-2. Preserve provider fields for country code, city/region/country, latitude/longitude, ISP, and IANA timezone.
-3. Pick a nearby residential-looking coordinate instead of the raw IP centroid. Use OpenStreetMap Overpass highway=residential results when available, and a safe jitter fallback otherwise.
-4. Infer a plausible locale bundle from country code + timezone: navigator.language, navigator.languages, and Accept-Language.
-5. Store settings and computed overrides only in chrome.storage.local. Do not add telemetry, analytics, accounts, remote config, or page-content collection.
-6. Use two content scripts:
+1. State the scope precisely: ordinary Chrome pages only. Do not claim to modify the OS, Claude Code, terminal networking, DNS, TLS, proxies, or server-side risk controls.
+2. Detect the current public exit IP through Chrome's network stack with multiple IP-geolocation fallbacks. Prefer a result with a valid IANA timezone; if the first provider only has coordinates, continue instead of treating timezone:null as complete.
+3. Preserve country code, city/region/country, coordinates, ISP, and IANA timezone. Infer navigator.language, navigator.languages, default Intl locale, and Accept-Language from country + timezone.
+4. Prefer a nearby OpenStreetMap Overpass highway=residential point over the raw IP centroid, with a boundary-safe jitter fallback.
+5. Use two content scripts:
    - an isolated-world bridge that can read chrome.storage and publish a JSON payload to the DOM;
    - a MAIN-world injector at document_start that patches page-visible APIs.
+6. MAIN world cannot synchronously read chrome.storage. Install a neutral first-read guard while waiting for the bridge so inline scripts cannot read the host's Asia/Shanghai / UTC+8 first; replace it immediately when the exit profile arrives.
 7. Patch:
    - navigator.geolocation.getCurrentPosition / watchPosition / clearWatch
    - navigator.permissions.query for geolocation
@@ -171,10 +210,12 @@ Requirements:
    - Intl.DateTimeFormat default timezone and resolvedOptions().timeZone
    - navigator.language and navigator.languages
    - Intl.DateTimeFormat / Intl.NumberFormat / Intl.Collator default locale
-8. Use chrome.declarativeNetRequest to set the outgoing Accept-Language header when language spoofing is enabled.
-9. Add a popup with toggles for location, timezone, language, accuracy, refresh interval, optional ipinfo token, and manual refresh.
-10. Add tests for timezone DST offsets, locale inference, provider parsing, and manifest injection order.
-11. Document the privacy model clearly: no telemetry, no page-content reading, local storage only, and explicit provider requests only for exit-IP/location matching.
+   - common Chinese system/vendor font probes through CanvasRenderingContext2D, OffscreenCanvas, FontFaceSet.check, and JS-assigned inline CSS; enable only for non-Chinese exit profiles
+8. Set outgoing Accept-Language through chrome.declarativeNetRequest and expose independent location/timezone/language/font toggles.
+9. Store settings and overrides only in chrome.storage.local. Never read page text, cookies, credentials, forms, or browsing history. Add no accounts, telemetry, analytics, remote config, or project backend.
+10. Do not claim zero network access. List every host_permission, public provider purpose, sent field, and fallback order.
+11. Test DST, Invalid Date, locale inference, provider timezone enrichment, timezone:null regression, font lists/rewriting, injection order, and synchronous first-read behavior.
+12. Document uncovered surfaces separately: Web Workers, special iframes, Chrome privileged pages, and Claude Code / CLI.
 ```
 
 ## Limitations
@@ -183,6 +224,8 @@ Requirements:
 - IP geolocation is approximate.
 - Locale inference is heuristic because IP providers do not know the real user language.
 - Chrome extensions cannot inject into `chrome://`, the Chrome Web Store, or other privileged pages.
+- The current implementation cannot change the system timezone or network environment seen by Claude Code or other native processes. CLI support remains on the roadmap.
+- Web Workers, SharedWorkers, Service Workers, and special `about:blank` / `srcdoc` frames may still expose the host environment.
 - Some platforms may use additional risk signals outside browser JavaScript and headers.
 
 ## Development
@@ -199,6 +242,7 @@ geomirror/
 │   └── TECHNICAL.md
 ├── lib/
 │   ├── geo.js
+│   ├── font-mask.js
 │   ├── locale.js
 │   ├── providers.js
 │   └── timezone.js
@@ -206,6 +250,7 @@ geomirror/
 ├── popup.css
 ├── popup.js
 ├── test/
+│   ├── inject-smoke.js
 │   └── run-tests.js
 └── icons/
 ```
@@ -214,12 +259,14 @@ Checks:
 
 ```bash
 node test/run-tests.js
+node test/inject-smoke.js
 node --check background.js
 node --check content-inject.js
 node --check content-bridge.js
 node --check lib/providers.js
 node --check lib/locale.js
 node --check lib/timezone.js
+node --check lib/font-mask.js
 node --check popup.js
 ```
 

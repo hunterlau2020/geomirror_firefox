@@ -29,6 +29,7 @@
         timezone: o ? o.timezone : null,
         tzEnabled: s.tzEnabled !== false,
         langEnabled: s.langEnabled !== false,
+        fontEnabled: s.fontEnabled !== false,
         locale: o ? o.locale : null,
         languages: o ? o.languages : null,
       };

@@ -14,6 +14,7 @@ The extension currently spoofs:
 - `navigator.languages`
 - default `Intl.NumberFormat`, `Intl.Collator`, and `Intl.DateTimeFormat` locale
 - outgoing `Accept-Language` header via Chrome `declarativeNetRequest`
+- Chinese system/vendor font availability for non-Chinese exit profiles
 
 ## Runtime flow
 
@@ -23,7 +24,7 @@ The extension currently spoofs:
 4. `lib/locale.js` infers a plausible locale bundle from country code and timezone.
 5. `background.js` stores the computed override and status in `chrome.storage.local`.
 6. `content-bridge.js` runs in the isolated extension world, reads storage, and publishes the payload to `<html data-geomirror="...">`.
-7. `content-inject.js` runs in the page MAIN world at `document_start`, reads that payload, and patches browser APIs before normal page scripts run.
+7. `content-inject.js` runs in the page MAIN world at `document_start`, installs a neutral synchronous bootstrap, reads the bridge payload, and patches browser APIs before normal page scripts run.
 8. `background.js` installs a dynamic DNR rule to set the outgoing `Accept-Language` request header when language spoofing is enabled.
 
 ## Why there are two content scripts
@@ -45,6 +46,20 @@ The bridge solves this split:
 
 This is DST-aware. The patched `Date.prototype.getTimezoneOffset` passes `this`, so historical/future dates use the correct offset for that date instead of the current offset.
 
+### First-read protection
+
+MAIN-world scripts cannot synchronously read `chrome.storage.local`. Without a
+bootstrap, an inline page script can read the real host timezone before the
+isolated-world bridge publishes the exit profile. GeoMirror therefore installs
+the timezone and locale wrappers immediately with a neutral `Etc/UTC` /
+`en-US` bootstrap. The stored exit-IP profile replaces it as soon as the bridge
+responds. This prevents an initial `Asia/Shanghai` / UTC+8 leak.
+
+The provider chain also continues past a valid location-only response until it
+finds a provider with an IANA timezone. If every timezone-capable provider
+fails, the injector retains the neutral bootstrap rather than restoring the
+host timezone.
+
 ## Language implementation
 
 IP providers generally do not return a real user language. `lib/locale.js` uses deterministic offline inference:
@@ -55,6 +70,22 @@ IP providers generally do not return a real user language. `lib/locale.js` uses 
 
 The resulting bundle is used for both JS-visible locale values and the HTTP `Accept-Language` header.
 
+## Regional font masking
+
+When the exit profile is not Chinese and the font mask is enabled, GeoMirror
+rewrites probes for common Chinese system and vendor fonts to a deliberately
+unavailable family. Covered browser surfaces:
+
+- `CanvasRenderingContext2D.font`
+- `OffscreenCanvasRenderingContext2D.font`
+- inline `CSSStyleDeclaration.font`, `fontFamily`, `cssText`, and `setProperty`
+- `FontFaceSet.check` / `document.fonts.check`
+
+This covers the common canvas-width and DOM-width availability probes for
+PingFang, Hiragino Sans GB, ST fonts, Microsoft YaHei, SimSun, MiSans,
+HarmonyOS Sans, OPPO Sans, vivo Sans, WPS, and Founder/FZ families. The mask
+automatically stays inactive for `zh-*` locales and Chinese-region timezones.
+
 ## Limitations
 
 - This is browser-surface alignment, not a full anti-fingerprinting system.
@@ -62,6 +93,8 @@ The resulting bundle is used for both JS-visible locale values and the HTTP `Acc
 - Provider timezone quality depends on the IP geolocation provider.
 - Some pages can use high-entropy fingerprinting surfaces not covered here.
 - Extensions cannot modify every possible low-level browser/network signal.
+- A Chrome extension cannot change the timezone seen by native programs such
+  as Claude Code; it changes web-page JavaScript surfaces only.
 
 ## Testing
 
@@ -69,12 +102,14 @@ Run:
 
 ```bash
 node test/run-tests.js
+node test/inject-smoke.js
 node --check background.js
 node --check content-inject.js
 node --check content-bridge.js
 node --check lib/providers.js
 node --check lib/locale.js
 node --check lib/timezone.js
+node --check lib/font-mask.js
 node --check popup.js
 ```
 
