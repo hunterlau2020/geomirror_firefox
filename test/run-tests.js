@@ -116,15 +116,17 @@ test('IP providers parse timezone fields without discarding location fields', ()
   }).timezone, 'Europe/London');
 });
 
-test('the first provider is location-only and later providers can supply timezone', () => {
-  eq(IPLoc.IP_PROVIDERS[0].name, 'reallyfreegeoip');
-  eq(IPLoc.IP_PROVIDERS[0].parse({
+test('preferred providers run before the location-only fallback', () => {
+  eq(IPLoc.IP_PROVIDERS[0].name, 'ipapi.co');
+  const fallback = IPLoc.IP_PROVIDERS[IPLoc.IP_PROVIDERS.length - 1];
+  eq(fallback.name, 'reallyfreegeoip');
+  eq(fallback.parse({
     ip: '203.0.113.4',
     latitude: 34.05,
     longitude: -118.24,
   }).timezone, null);
   assert(
-    IPLoc.IP_PROVIDERS.slice(1).some((provider) =>
+    IPLoc.IP_PROVIDERS.slice(0, -1).some((provider) =>
       provider.parse(provider.name === 'ipwho.is'
         ? { timezone: { id: 'America/Los_Angeles' } }
         : { timezone: 'America/Los_Angeles' }

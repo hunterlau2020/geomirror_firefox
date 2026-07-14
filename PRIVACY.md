@@ -29,10 +29,10 @@ location.
 
 | Host | Purpose | Data sent |
 | --- | --- | --- |
-| `reallyfreegeoip.org` | Primary IP geolocation | GET request only — your exit IP is visible to the service as the source address |
+| `ipapi.co` | Primary IP geolocation | GET request only — your exit IP is visible to the service as the source address |
 | `ipwho.is` | Fallback IP geolocation | GET only |
-| `ipapi.co` | Fallback IP geolocation | GET only |
 | `ipinfo.io` | Fallback IP geolocation; optional token if you provide one | GET; your token if entered |
+| `reallyfreegeoip.org` | Last-resort location-only fallback | GET only |
 | `overpass-api.de`, `overpass.kumi.systems`, `maps.mail.ru/osm/tools/overpass` | Find nearby residential roads (OpenStreetMap) | The exit-IP latitude/longitude |
 | `api.bigdatacloud.net` | Reverse-geocode the chosen point for display | The chosen override latitude/longitude |
 
