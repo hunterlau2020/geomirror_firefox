@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GeoMirror",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Mirror your visible IP into the browser: align geolocation, timezone and language, and mask regional font signals that contradict the exit profile.",
   "minimum_chrome_version": "111",
   "permissions": ["storage", "alarms", "declarativeNetRequest"],
