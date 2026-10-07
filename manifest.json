@@ -1,14 +1,14 @@
 {
   "manifest_version": 3,
   "name": "GeoMirror for Firefox",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Mirror your visible IP into the browser: align geolocation, timezone and language, and mask regional font signals that contradict the exit profile. Firefox port of Azurboy/geomirror.",
   "browser_specific_settings": {
     "gecko": {
       "id": "geomirror-firefox@geomirror.local",
-      "strict_min_version": "128.0",
+      "strict_min_version": "142.0",
       "data_collection_permissions": {
-        "required": []
+        "required": ["none"]
       }
     }
   },
