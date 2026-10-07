@@ -1,22 +1,20 @@
-/* GeoMirror — isolated-world bridge.
+/* GeoMirror for Firefox — isolated-world bridge.
  *
- * Runs in the isolated world (has chrome.* access) at document_start. It reads
+ * Runs in the isolated world (has browser.* access) at document_start. It reads
  * the chosen override from storage and publishes it onto <html data-geomirror>,
  * where the MAIN-world injector can read it. MAIN-world scripts cannot access
- * chrome.storage, so this bridge is the only way to pass the coordinate across.
+ * extension storage, so this bridge is the only way to pass the profile across.
  *
- * It now also publishes timezone + locale fields so the injector can spoof the
- * Date timezone offset and navigator.language / Intl locale, not just coords.
- *
- * It re-publishes on storage changes, so open pages pick up refreshes and
- * enable/disable toggles live.
+ * Firefox specifics: storage.local.get returns a Promise via the browser.*
+ * namespace, so the callback style of the Chrome version becomes a .then().
+ * The DOM itself is shared between both worlds, so the attribute hand-off and
+ * the storage.onChanged live-republish behave exactly like upstream.
  */
 (function () {
-  const root = document.documentElement;
-  if (!root) return;
-
   function publish() {
-    chrome.storage.local.get(['override', 'settings'], (data) => {
+    browser.storage.local.get(['override', 'settings']).then((data) => {
+      const root = document.documentElement;
+      if (!root) return;
       const s = data.settings || {};
       const o = data.override;
       const enabled = s.enabled !== false;
@@ -34,11 +32,11 @@
         languages: o ? o.languages : null,
       };
       root.setAttribute('data-geomirror', JSON.stringify(payload));
-    });
+    }).catch(() => { /* storage read failed; keep whatever was published */ });
   }
 
   publish();
-  chrome.storage.onChanged.addListener((changes, area) => {
+  browser.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && (changes.override || changes.settings)) publish();
   });
 })();

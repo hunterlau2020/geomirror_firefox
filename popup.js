@@ -1,4 +1,14 @@
-/* GeoMirror — popup UI logic. */
+/* GeoMirror for Firefox — popup UI logic.
+ *
+ * Firefox port notes:
+ *  - browser.runtime.sendMessage returns a Promise; the Chrome callback form
+ *    is replaced with .catch(() => null) so a sleeping background page or a
+ *    closed message channel never breaks the UI.
+ *  - Since Firefox 127, MV3 host permissions are opt-in: they are NOT granted
+ *    automatically at install time. Without <all_urls> granted, content
+ *    scripts don't run and DNR can't rewrite headers, so the popup checks and
+ *    offers a one-click permissions.request() (allowed from this user gesture).
+ */
 const $ = (id) => document.getElementById(id);
 let busy = false;
 
@@ -13,6 +23,16 @@ function sourceLabel(s) {
     jitter: 'Nearby point · offset fallback',
     ipcenter: 'IP center',
   })[s] || s || '';
+}
+
+async function checkPerm() {
+  try {
+    const granted = await browser.permissions.contains({ origins: ['<all_urls>'] });
+    $('permWarn').style.display = granted ? 'none' : 'flex';
+    return granted;
+  } catch (_) {
+    return true; // permissions API unavailable — assume granted, fail soft
+  }
 }
 
 function render({ state, override, settings }) {
@@ -63,12 +83,13 @@ function render({ state, override, settings }) {
 }
 
 function send(msg) {
-  return new Promise((res) => chrome.runtime.sendMessage(msg, res));
+  return browser.runtime.sendMessage(msg).catch(() => null);
 }
 
 async function load() {
   const snap = await send({ type: 'GET_STATE' });
-  render(snap);
+  if (snap) render(snap);
+  await checkPerm();
 }
 
 function bind(id, key, map) {
@@ -88,6 +109,14 @@ bind('accuracyM', 'accuracyM', (v) => Math.max(5, Math.min(500, +v || 30)));
 bind('refreshMinutes', 'refreshMinutes', (v) => Math.max(30, Math.min(10080, +v || 360)));
 bind('ipToken', 'ipToken', (v) => (v || '').trim());
 
+$('grantPerm').addEventListener('click', async () => {
+  try {
+    await browser.permissions.request({ origins: ['<all_urls>'] });
+  } catch (_) { /* user dismissed or API unavailable */ }
+  await checkPerm();
+  await load();
+});
+
 $('refresh').addEventListener('click', async () => {
   if (busy) return;
   busy = true;
@@ -100,7 +129,7 @@ $('refresh').addEventListener('click', async () => {
   await load();
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
+browser.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && (changes.state || changes.override || changes.settings)) load();
 });
 

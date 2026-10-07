@@ -1,16 +1,22 @@
-/* GeoMirror — background service worker.
+/* GeoMirror for Firefox — background event page.
  *
- * Responsibilities:
+ * Firefox MV3 uses a non-persistent event page instead of Chrome's service
+ * worker, so the lib helpers are loaded via manifest background.scripts (in
+ * order) and importScripts() is gone. All APIs use the promise-based `browser.*`
+ * namespace, and onMessage replies by returning a Promise instead of the
+ * Chrome-style sendResponse + return true dance.
+ *
+ * Responsibilities (unchanged from upstream):
  *  - Detect the exit-IP geolocation (through the user's proxy).
  *  - Pick a nearby residential street as the override coordinate.
- *  - Resolve the exit IP's timezone (already returned by the IP providers) and
- *    infer a matching locale (country code → language, timezone as tie-breaker).
+ *  - Resolve the exit IP's timezone and infer a matching locale.
  *  - Store everything so the content scripts can apply it to every page.
- *  - Push an Accept-Language header rule via declarativeNetRequest so the
- *    *outgoing* HTTP header matches the spoofed language, not just navigator.
+ *  - Push an Accept-Language header rule via declarativeNetRequest (supported
+ *    in Firefox since 113) so the outgoing HTTP header matches the spoofed
+ *    language, not just navigator.
  *  - Refresh on install / startup and on demand (one-tap re-detect).
  */
-importScripts('lib/geo.js', 'lib/providers.js', 'lib/locale.js');
+'use strict';
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -26,47 +32,58 @@ const ALARM = 'refresh';
 const AL_RULE_ID = 9001; // dynamic declarativeNetRequest rule id for Accept-Language
 
 async function getSettings() {
-  const { settings } = await chrome.storage.local.get('settings');
+  const { settings } = await browser.storage.local.get('settings');
   return { ...DEFAULT_SETTINGS, ...(settings || {}) };
 }
 
 async function saveSettings(patch) {
   const next = { ...(await getSettings()), ...patch };
-  await chrome.storage.local.set({ settings: next });
+  await browser.storage.local.set({ settings: next });
   return next;
 }
 
 async function patchState(patch) {
-  const { state } = await chrome.storage.local.get('state');
-  await chrome.storage.local.set({ state: { ...(state || {}), ...patch } });
+  const { state } = await browser.storage.local.get('state');
+  await browser.storage.local.set({ state: { ...(state || {}), ...patch } });
 }
 
 /** Push / clear the dynamic Accept-Language rule. No-op if DNR is unavailable. */
 async function syncHeaderRule(settings, override) {
-  if (!chrome.declarativeNetRequest) return;
+  if (!browser.declarativeNetRequest || !browser.declarativeNetRequest.updateDynamicRules) return;
   try {
-    await chrome.declarativeNetRequest.updateDynamicRules({
+    await browser.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [AL_RULE_ID],
     });
     if (!(settings && settings.enabled && settings.langEnabled)) return;
     let al = override && override.acceptLanguage;
     if (!al) return; // nothing to enforce yet
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      addRules: [{
-        id: AL_RULE_ID,
-        priority: 1,
-        action: {
-          type: 'modifyHeaders',
-          requestHeaders: [
-            { header: 'accept-language', operation: 'set', value: al },
-          ],
-        },
-        condition: {
+    const makeRule = (condition) => ({
+      id: AL_RULE_ID,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [
+          { header: 'accept-language', operation: 'set', value: al },
+        ],
+      },
+      condition,
+    });
+    try {
+      await browser.declarativeNetRequest.updateDynamicRules({
+        addRules: [makeRule({
           urlFilter: '*',
           resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest'],
-        },
-      }],
-    });
+        })],
+      });
+    } catch (_) {
+      // Some Firefox builds are picky about urlFilter:'*' — a condition with
+      // only resourceTypes matches every request too.
+      await browser.declarativeNetRequest.updateDynamicRules({
+        addRules: [makeRule({
+          resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest'],
+        })],
+      });
+    }
   } catch (_) { /* DNR may be unavailable on some builds; fail soft */ }
 }
 
@@ -114,7 +131,7 @@ async function refresh() {
       overrideAddress: addr ? addr.text : '',
       lastUpdated: now, lastError: null,
     };
-    await chrome.storage.local.set({ override, state });
+    await browser.storage.local.set({ override, state });
     await syncHeaderRule(s, override);
   } catch (e) {
     await patchState({
@@ -127,20 +144,20 @@ async function refresh() {
 
 async function ensureAlarm() {
   const s = await getSettings();
-  await chrome.alarms.clear(ALARM);
-  chrome.alarms.create(ALARM, { periodInMinutes: Math.max(1, s.refreshMinutes) });
+  await browser.alarms.clear(ALARM);
+  browser.alarms.create(ALARM, { periodInMinutes: Math.max(1, s.refreshMinutes) });
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  const { settings } = await chrome.storage.local.get('settings');
-  if (!settings) await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
+browser.runtime.onInstalled.addListener(async () => {
+  const { settings } = await browser.storage.local.get('settings');
+  if (!settings) await browser.storage.local.set({ settings: DEFAULT_SETTINGS });
   await ensureAlarm();
   await refresh();
 });
 
-chrome.runtime.onStartup.addListener(async () => {
+browser.runtime.onStartup.addListener(async () => {
   await ensureAlarm();
-  const { state, override, settings } = await chrome.storage.local.get(['state', 'override', 'settings']);
+  const { state, override, settings } = await browser.storage.local.get(['state', 'override', 'settings']);
   // Re-assert the header rule on startup (dynamic rules don't persist a value
   // we control across browser restarts in all cases).
   await syncHeaderRule({ ...DEFAULT_SETTINGS, ...(settings || {}) }, override);
@@ -149,32 +166,30 @@ chrome.runtime.onStartup.addListener(async () => {
   if (!state || age > s.refreshMinutes * 60000) await refresh();
 });
 
-chrome.alarms.onAlarm.addListener((a) => {
+browser.alarms.onAlarm.addListener((a) => {
   if (a.name === ALARM) refresh();
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  (async () => {
-    if (msg && msg.type === 'REFRESH') {
-      await refresh();
-    } else if (msg && msg.type === 'SET_SETTINGS') {
-      const next = await saveSettings(msg.patch || {});
-      const { override } = await chrome.storage.local.get('override');
-      if (override) {
-        override.enabled = next.enabled;
-        override.acc = next.accuracyM;
-        override.tzEnabled = next.tzEnabled;
-        override.langEnabled = next.langEnabled;
-        override.fontEnabled = next.fontEnabled;
-        await chrome.storage.local.set({ override });
-      }
-      // Toggling language spoofing changes whether the header rule is active.
-      await syncHeaderRule(next, override);
-      if (msg.patch && 'refreshMinutes' in msg.patch) await ensureAlarm();
+// Firefox style: return a Promise from the listener; it resolves to the reply.
+browser.runtime.onMessage.addListener(async (msg) => {
+  if (msg && msg.type === 'REFRESH') {
+    await refresh();
+  } else if (msg && msg.type === 'SET_SETTINGS') {
+    const next = await saveSettings(msg.patch || {});
+    const { override } = await browser.storage.local.get('override');
+    if (override) {
+      override.enabled = next.enabled;
+      override.acc = next.accuracyM;
+      override.tzEnabled = next.tzEnabled;
+      override.langEnabled = next.langEnabled;
+      override.fontEnabled = next.fontEnabled;
+      await browser.storage.local.set({ override });
     }
-    // Return a fresh snapshot for any message (covers GET_STATE too).
-    const { state, override, settings } = await chrome.storage.local.get(['state', 'override', 'settings']);
-    sendResponse({ state, override, settings: { ...DEFAULT_SETTINGS, ...(settings || {}) } });
-  })();
-  return true; // keep channel open for async sendResponse
+    // Toggling language spoofing changes whether the header rule is active.
+    await syncHeaderRule(next, override);
+    if (msg.patch && 'refreshMinutes' in msg.patch) await ensureAlarm();
+  }
+  // Return a fresh snapshot for any message (covers GET_STATE too).
+  const { state, override, settings } = await browser.storage.local.get(['state', 'override', 'settings']);
+  return { state, override, settings: { ...DEFAULT_SETTINGS, ...(settings || {}) } };
 });

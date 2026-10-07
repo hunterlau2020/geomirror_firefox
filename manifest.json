@@ -1,21 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "GeoMirror",
+  "name": "GeoMirror for Firefox",
   "version": "1.2.2",
-  "description": "Mirror your visible IP into the browser: align geolocation, timezone and language, and mask regional font signals that contradict the exit profile.",
-  "minimum_chrome_version": "111",
+  "description": "Mirror your visible IP into the browser: align geolocation, timezone and language, and mask regional font signals that contradict the exit profile. Firefox port of Azurboy/geomirror.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "geomirror-firefox@geomirror.local",
+      "strict_min_version": "128.0"
+    }
+  },
   "permissions": ["storage", "alarms", "declarativeNetRequest"],
-  "host_permissions": [
-    "https://reallyfreegeoip.org/*",
-    "https://ipwho.is/*",
-    "https://ipapi.co/*",
-    "https://ipinfo.io/*",
-    "https://overpass-api.de/*",
-    "https://overpass.kumi.systems/*",
-    "https://maps.mail.ru/osm/tools/overpass/*",
-    "https://api.bigdatacloud.net/*"
-  ],
-  "background": { "service_worker": "background.js" },
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["lib/geo.js", "lib/providers.js", "lib/locale.js", "background.js"]
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],

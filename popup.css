@@ -58,6 +58,15 @@ header {
 }
 .toggle input:checked + .switch { background: #2ea44f; }
 .toggle input:checked + .switch::after { transform: translateX(14px); }
+.perm-warn {
+  background: #fff8f6; color: #86281e; font-size: 12px;
+  flex-direction: column; gap: 8px; align-items: flex-start;
+}
+.perm-warn button {
+  border: 1px solid #d73a49; background: #d73a49; color: #fff;
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+.perm-warn button:hover { background: #b62331; }
 footer { padding: 8px 14px; text-align: right; }
 footer a { color: #57606a; text-decoration: none; font-size: 11px; }
 footer a:hover { text-decoration: underline; }

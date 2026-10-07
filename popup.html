@@ -5,6 +5,12 @@
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
+  <div id="permWarn" class="card perm-warn" style="display:none">
+    <div>Site access is not granted yet — GeoMirror cannot read your exit IP or
+      spoof pages until Firefox grants it.</div>
+    <button id="grantPerm">Grant site access</button>
+  </div>
+
   <header>
     <div id="status">
       <span id="dot" class="dot"></span>
